@@ -181,14 +181,60 @@ sudo systemctl enable webcam.service
 To run the application outside of the systemd service — useful for testing on the Pi or on a desktop Linux machine with a webcam:
 
 ```bash
-# On the Pi, if a display is connected
-DISPLAY=:0 python3 main.py
+# On the Pi — direct framebuffer (same as the service)
+sudo SDL_VIDEODRIVER=kmsdrm python3 main.py
 
-# In a windowed mode (set DISPLAY_FULLSCREEN = False in config.py first)
-python3 main.py
+# On a desktop Linux machine with an X11 display
+DISPLAY=:0 SDL_VIDEODRIVER=x11 python3 main.py
+
+# Windowed mode on a desktop (set DISPLAY_FULLSCREEN = False in config.py first)
+DISPLAY=:0 SDL_VIDEODRIVER=x11 python3 main.py
 ```
 
 Press **ESC** to exit cleanly.
+
+---
+
+## Blank Screen Troubleshooting
+
+**Symptom:** Pi boots, display goes blank, nothing appears.
+
+This is almost always caused by the `pi` user lacking permission to access the DRM/framebuffer device, or a display manager (lightdm) holding the display. The service uses `SDL_VIDEODRIVER=kmsdrm` to render directly to the framebuffer without X11 — no display manager is needed or wanted.
+
+**Step 1 — Check the service logs:**
+```bash
+sudo journalctl -u webcam.service -n 60 --no-pager
+```
+
+**Step 2 — Re-run the installer** (it detects your actual username, adds you to the correct groups, and disables lightdm):
+```bash
+bash ~/webcam/install.sh
+sudo reboot
+```
+
+**Step 3 — Verify group membership** (replace `YOUR_USERNAME` with your actual username):
+```bash
+groups YOUR_USERNAME
+# Should include: video render input
+```
+If missing, add them manually and reboot:
+```bash
+sudo usermod -a -G video,render,input YOUR_USERNAME
+sudo reboot
+```
+
+**Step 4 — Confirm lightdm is not running:**
+```bash
+systemctl is-active lightdm
+# Should return: inactive  (or "Unit not found")
+```
+If active, disable it: `sudo systemctl disable --now lightdm` then reboot.
+
+**Step 5 — Check DRM device access:**
+```bash
+ls -la /dev/dri/
+# pi must be able to read card0 / renderD128
+```
 
 ---
 

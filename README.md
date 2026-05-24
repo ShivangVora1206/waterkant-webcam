@@ -79,33 +79,44 @@ sudo systemctl restart webcam.service
 
 ## Display Rotation
 
-The project corrects for a physically rotated monitor entirely in software — no X11 or xrandr rotation is used.
+The physical display is mounted at −90° (portrait). The software and KMS driver work together to show a correctly-framed, undistorted image. Understanding the geometry helps when tuning.
 
-**How it works:**
+### Why aspect ratio matters
 
-1. The Brio 105 captures a 1920×1080 landscape frame.
-2. `display.py` applies a −90° rotation (`cv2.ROTATE_90_COUNTERCLOCKWISE`), producing a 1080×1920 portrait frame.
-3. Pygame scales this to fill the screen's reported resolution and blits it fullscreen.
+The Brio 105 always captures in landscape (16:9). The KMS/DRM driver reports the connected monitor's **native** resolution — for a 1920×1080 panel this is always 1920×1080 (16:9), regardless of how the monitor is physically mounted.
 
-**To change the rotation:**
+| Software rotation | Frame after rotation | KMS-reported screen | Match? |
+|---|---|---|---|
+| `DISPLAY_ROTATION = 0` | 1280×720 (16:9) | 1920×1080 (16:9) | ✅ Perfect fill, no crop |
+| `DISPLAY_ROTATION = -90` | 720×1280 (9:16) | 1920×1080 (16:9) | ❌ Inverse ratio → extreme zoom |
 
-Open `config.py` and set `DISPLAY_ROTATION` to the angle that compensates for your physical mount:
+**Default is `0`** — the camera's native landscape frame fills the 16:9 KMS screen perfectly (scale 1.5×, no cropping, no bars). The physical −90° display mount then rotates the landscape image into portrait for the viewer. This is the correct setup when the camera is mounted on the same frame as the display (both rotated together).
 
-| Physical mount | `DISPLAY_ROTATION` value |
-|---|---|
-| Landscape (no rotation) | `0` |
-| Portrait, cable at top (−90°) | `-90` |
-| Portrait, cable at bottom (+90°) | `90` |
-| Upside-down landscape | `180` |
+### When to use `DISPLAY_ROTATION = -90`
 
-Also update `/boot/firmware/config.txt` to match so the OS reports the correct resolution:
+Only if the camera is in a fixed landscape orientation while the display is portrait **and** you configure the OS to report a portrait resolution. To do that, add this line to `/boot/firmware/cmdline.txt` (space-separated, on one line):
 
-| `DISPLAY_ROTATION` | `display_rotate` in config.txt |
-|---|---|
-| `0` | `0` (or omit the line) |
-| `-90` | `1` |
-| `90` | `3` |
-| `180` | `2` |
+```
+video=HDMI-A-1:1920x1080@60,rotate=90
+```
+
+With this kernel parameter the KMS driver reports 1080×1920 (portrait). A software-rotated 720×1280 frame then fills the 1080×1920 screen perfectly (scale 1.5×, no cropping, no bars).
+
+If after adding the kernel parameter the image is rotated the wrong way, change `rotate=90` to `rotate=270`.
+
+### Quick decision guide
+
+```
+Start with DISPLAY_ROTATION = 0
+│
+├─ Image fills display, correct orientation → DONE ✓
+│
+├─ Image fills display but sideways → try DISPLAY_ROTATION = 90 or -90
+│
+└─ Image is zoomed / cropped
+   └─ Add video=HDMI-A-1:1920x1080@60,rotate=90 to cmdline.txt
+      and set DISPLAY_ROTATION = -90
+```
 
 ---
 

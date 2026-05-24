@@ -16,9 +16,9 @@ class Display:
         self._screen = None
         self._screen_size = None
         # Pre-allocated objects — created once on first frame, reused every frame
-        self._display_surface = None   # pygame.Surface at dest size
+        self._display_surface = None   # pygame.Surface at screen size
         self._pixel_buffer = None      # numpy (W, H, 3) buffer for blit_array
-        self._dest_rect = None         # (x, y, w, h) letterbox/pillarbox placement
+        self._crop = None              # (src_x, src_y, src_w, src_h) center-crop region
         self._last_frame_size = None   # (w, h) of the last rotated frame
 
     # ------------------------------------------------------------------
@@ -38,6 +38,11 @@ class Display:
             )
 
         self._screen_size = self._screen.get_size()
+        screen_w, screen_h = self._screen_size
+
+        # Allocate once — output always fills the full screen
+        self._display_surface = pygame.Surface((screen_w, screen_h))
+        self._pixel_buffer = np.empty((screen_w, screen_h, 3), dtype=np.uint8)
 
     def close(self):
         pygame.quit()
@@ -60,18 +65,26 @@ class Display:
 
         return frame
 
-    def _compute_dest(self, frame_w: int, frame_h: int):
-        """Fit frame inside screen while preserving aspect ratio (letterbox / pillarbox).
+    def _compute_crop(self, frame_w: int, frame_h: int):
+        """Compute a center-crop region so the frame fills the screen with no bars.
 
-        Returns (dest_x, dest_y, dest_w, dest_h).  Any unused area is black.
+        Uses the "cover" / object-fit:cover strategy:
+          - Scale the frame up until BOTH dimensions meet or exceed the screen.
+          - Crop the excess from the center.
+
+        Returns (src_x, src_y, src_w, src_h) — a rect in the rotated frame that,
+        when resized to screen dimensions, fills the display exactly.
         """
         screen_w, screen_h = self._screen_size
-        scale = min(screen_w / frame_w, screen_h / frame_h)
-        dest_w = int(frame_w * scale)
-        dest_h = int(frame_h * scale)
-        dest_x = (screen_w - dest_w) // 2
-        dest_y = (screen_h - dest_h) // 2
-        return dest_x, dest_y, dest_w, dest_h
+        # max() ensures the frame is large enough to cover the screen in both axes
+        scale = max(screen_w / frame_w, screen_h / frame_h)
+        # How much of the original frame maps to the screen after scaling
+        src_w = round(screen_w / scale)
+        src_h = round(screen_h / scale)
+        # Centre the crop window
+        src_x = (frame_w - src_w) // 2
+        src_y = (frame_h - src_h) // 2
+        return src_x, src_y, src_w, src_h
 
     # ------------------------------------------------------------------
     # Render
@@ -81,35 +94,30 @@ class Display:
         frame = self._apply_rotation(frame)
         frame_h, frame_w = frame.shape[:2]
 
-        # On first frame (or if frame size changes), set up the layout and
-        # pre-allocate the surface + pixel buffer used every subsequent frame.
+        # Recompute crop geometry only when frame dimensions change
         if (frame_w, frame_h) != self._last_frame_size:
-            dest_x, dest_y, dest_w, dest_h = self._compute_dest(frame_w, frame_h)
-            self._dest_rect = (dest_x, dest_y, dest_w, dest_h)
+            self._crop = self._compute_crop(frame_w, frame_h)
             self._last_frame_size = (frame_w, frame_h)
-            # Surface lives at dest size; allocate once and reuse
-            self._display_surface = pygame.Surface((dest_w, dest_h))
-            # pygame.surfarray expects (W, H, 3) — allocate contiguous buffer
-            self._pixel_buffer = np.empty((dest_w, dest_h, 3), dtype=np.uint8)
-            # Paint black bars once — they never need to be redrawn
-            self._screen.fill((0, 0, 0))
 
-        dest_x, dest_y, dest_w, dest_h = self._dest_rect
+        src_x, src_y, src_w, src_h = self._crop
+        screen_w, screen_h = self._screen_size
 
-        # cv2.resize is significantly faster than pygame.transform.scale for
-        # large frames because it runs in optimised C with SIMD support.
-        frame = cv2.resize(frame, (dest_w, dest_h), interpolation=cv2.INTER_LINEAR)
+        # 1. Crop first (O(1) numpy slice — no data copy)
+        frame = frame[src_y:src_y + src_h, src_x:src_x + src_w]
 
-        # BGR → RGB conversion (in C, no Python overhead)
+        # 2. Resize the small cropped region to screen size (faster than
+        #    resizing the full frame then cropping)
+        frame = cv2.resize(frame, (screen_w, screen_h), interpolation=cv2.INTER_LINEAR)
+
+        # 3. BGR → RGB
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Transpose from OpenCV's (H, W, 3) to pygame's (W, H, 3) layout and
-        # write into the pre-allocated contiguous buffer (avoids heap allocation).
+        # 4. Transpose (H,W,3) → (W,H,3) into pre-allocated contiguous buffer
         np.copyto(self._pixel_buffer, frame.transpose(1, 0, 2))
 
-        # Blit directly into the pre-allocated surface (no new Surface created)
+        # 5. Blit into pre-allocated surface and flip — no heap allocation per frame
         pygame.surfarray.blit_array(self._display_surface, self._pixel_buffer)
-        self._screen.blit(self._display_surface, (dest_x, dest_y))
+        self._screen.blit(self._display_surface, (0, 0))
         pygame.display.flip()
 
     # ------------------------------------------------------------------

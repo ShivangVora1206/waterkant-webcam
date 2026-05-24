@@ -6,8 +6,8 @@
 
 # Camera
 CAMERA_INDEX = None     # None = auto-detect Logitech Brio 105; set to 0 to force /dev/video0
-CAMERA_WIDTH = 1920
-CAMERA_HEIGHT = 1080
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
 CAMERA_FPS = 30
 CAMERA_RECONNECT_ATTEMPTS = 30  # consecutive read failures before attempting a reconnect
 

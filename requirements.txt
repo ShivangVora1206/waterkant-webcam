@@ -1,0 +1,4 @@
+# Prefer apt packages on Raspberry Pi (see install.sh). This file is for venv/pip installs.
+opencv-python-headless>=4.8.0
+pygame>=2.5.0
+numpy>=1.24.0

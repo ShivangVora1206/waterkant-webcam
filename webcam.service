@@ -1,0 +1,22 @@
+[Unit]
+Description=Webcam Exhibit Fullscreen Display
+After=multi-user.target
+# Conflicts with getty on VT1 so they don't compete for the same terminal
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/webcam
+# xinit launches a bare X server on :0 vt1; Python is its sole client.
+# When main.py exits, xinit exits too, triggering a restart.
+ExecStart=/usr/bin/xinit /usr/bin/python3 /home/pi/webcam/main.py -- :0 vt1 -nolisten tcp
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
